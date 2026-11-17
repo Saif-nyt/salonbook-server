@@ -12,18 +12,7 @@ MongoDB.
 
 ## Stack
 
-| Concern | Choice |
-| --- | --- |
-| Runtime | Node.js 20.9+ (ESM) |
-| Server | Express 5 |
-| Database | MongoDB + Mongoose 9 |
-| Auth | Better Auth (email/password + Google OAuth), JWT plugin, JWKS |
-| Validation | Zod |
-| Payments | Stripe Checkout + signed webhooks |
-| Uploads | ImgBB |
-| Security | Helmet, CORS allow-list, verified JWTs with `jose`, Zod-validated input |
 
-## Architecture
 
 ```
 src/
