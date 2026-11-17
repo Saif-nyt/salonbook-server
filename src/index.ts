@@ -82,11 +82,28 @@ const paymentStatusQuerySchema = z.object({
   session_id: z.string().min(1, "A payment session is required"),
 });
 
+// Connect once per process, then make every request wait for it.
+// Works for the local HTTP server and for Vercel serverless cold starts.
+const dbReady: Promise<void> = (async () => {
+  await connectToMongoDB();
+  await ensureCollections();
+})();
+
 function createApp() {
   const app = express();
 
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
+
+  // Gate requests until the database connection is established.
+  app.use(async (_req, _res, next) => {
+    try {
+      await dbReady;
+      next();
+    } catch (error) {
+      next(error);
+    }
+  });
 
   app.use(
     helmet({
@@ -270,40 +287,42 @@ function createApp() {
   return app;
 }
 
-async function start() {
-  await connectToMongoDB();          // ← user's requested code path
-  await ensureCollections();         // create DB, collections, indexes
+// Export the Express app for serverless / Vercel.
+// For local development, also start an HTTP server.
+const app = createApp();
+export default app;
 
-  const app = createApp();
-  const server = createServer(app);
+// Only listen on a port when running locally (not on Vercel).
+if (!process.env.VERCEL) {
+  async function start() {
+    await dbReady;
 
-  server.listen(env.PORT, () => {
-    console.log(`SalonBook API listening on port ${env.PORT} (${env.NODE_ENV})`);
-  });
-
-  let shuttingDown = false;
-
-  const shutdown = (signal: string) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    console.log(`${signal} received, shutting down`);
-
-    server.close(() => {
-      void (async () => {
-        await disconnectFromMongoDB();
-        await closeAuthDatabase();
-        process.exit(0);
-      })();
+    const server = createServer(app);
+    server.listen(env.PORT, () => {
+      console.log(`SalonBook API listening on port ${env.PORT} (${env.NODE_ENV})`);
     });
 
-    setTimeout(() => process.exit(1), 10_000).unref();
-  };
+    let shuttingDown = false;
+    const shutdown = (signal: string) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      console.log(`${signal} received, shutting down`);
+      server.close(() => {
+        void (async () => {
+          await disconnectFromMongoDB();
+          await closeAuthDatabase();
+          process.exit(0);
+        })();
+      });
+      setTimeout(() => process.exit(1), 10_000).unref();
+    };
 
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  process.on("SIGINT", () => shutdown("SIGINT"));
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
+  }
+
+  start().catch((error) => {
+    console.error("Failed to start SalonBook API", error);
+    process.exit(1);
+  });
 }
-
-start().catch((error) => {
-  console.error("Failed to start SalonBook API", error);
-  process.exit(1);
-});
