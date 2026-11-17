@@ -2,13 +2,9 @@ import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "@better-auth/mongo-adapter";
 import { bearer, jwt } from "better-auth/plugins";
 import { APIError, createAuthMiddleware } from "better-auth/api";
-import { MongoClient } from "mongodb";
 import { env } from "../config/env.js";
 import { User } from "../models/user.model.js";
-
-const mongoClient = new MongoClient(env.MONGODB_URI, {
-  serverSelectionTimeoutMS: 10_000,
-});
+import { client } from "../config/database.js";
 
 const PASSWORD_RULES = [
   { test: (value: string) => value.length >= 6, message: "Password must be at least 6 characters long" },
@@ -20,7 +16,7 @@ export const auth = betterAuth({
   appName: "SalonBook",
   secret: env.BETTER_AUTH_SECRET,
   baseURL: env.BETTER_AUTH_URL,
-  database: mongodbAdapter(mongoClient.db()),
+  database: mongodbAdapter(client.db()),
   trustedOrigins: env.allowedOrigins,
   emailAndPassword: {
     enabled: true,
@@ -131,5 +127,5 @@ export const auth = betterAuth({
 });
 
 export async function closeAuthDatabase(): Promise<void> {
-  await mongoClient.close();
+  // The shared client is closed by disconnectFromMongoDB(); nothing to do here.
 }
