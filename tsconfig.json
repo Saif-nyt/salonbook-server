@@ -14,8 +14,7 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "sourceMap": true,
-    "declaration": false,
-    "types": ["node"]
+    "declaration": false
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
