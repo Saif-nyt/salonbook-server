@@ -27,19 +27,22 @@ MongoDB.
 
 ```
 src/
-  app.ts                Express app: CORS, Helmet, raw webhook, Better Auth handler
-  index.ts              env validation, DB connection, HTTP server, shutdown
+  index.ts              Express app, every API route, DB connection, HTTP server, shutdown
   config/               env schema, constants, database connection
   models/               User, Service, Appointment, Transaction, WebhookEvent
-  routes/               thin routers per resource
   controllers/          HTTP parsing and response envelopes
   services/             business rules and persistence
   middleware/           auth, role gates, Zod validation, upload, errors
   lib/                  Better Auth config, JWT/JWKS, Stripe and ImgBB clients
-  scripts/              seed, create-admin
   validators/           shared Zod schemas
   utils/                API envelope, AppError, dates, Mongo helpers
 ```
+
+All route definitions live in `src/index.ts` next to the middleware order they depend
+on. Controllers stay thin and services own the business rules. Because Express matches
+in order, `/services/categories`, `/appointments/availability` and `/appointments/mine`
+are declared before their `/:id` counterparts, and the Stripe webhook is registered
+before `express.json()` so it receives the raw body.
 
 Every response uses:
 
@@ -92,13 +95,12 @@ The API does **not** trust client claims:
 - Password complexity (6+ characters, upper and lower case) is enforced by the auth
   config, not only in the UI.
 - Profile updates accept `name`, `phone` and `image` only. `role` and `isBlocked` are
-  ignored — verified by the smoke test.
+  ignored by the profile endpoint.
 
 ### Creating the first admin
 
-Two supported paths:
-
-**A. Protected setup endpoint** (use once after deployment):
+The only supported path is the protected setup endpoint, used once after deployment or
+against a fresh local database:
 
 ```bash
 curl -X POST https://api.example.com/api/admin/setup \
@@ -107,18 +109,11 @@ curl -X POST https://api.example.com/api/admin/setup \
   -d '{"name":"SalonBook Admin","email":"admin@example.com","password":"StrongPass1"}'
 ```
 
-It is disabled when `ADMIN_SETUP_SECRET` is not configured and rejects requests with a
-wrong secret.
+It is disabled when `ADMIN_SETUP_SECRET` is not configured, rejects requests with a
+wrong secret, refuses a second admin once one exists, and — when `ADMIN_EMAIL` is set —
+only accepts that address.
 
-**B. Server-side script** (recommended for local setup):
-
-```bash
-npm run create-admin
-```
-
-Uses `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `ADMIN_NAME` from the environment.
-
-There is no UI control anywhere that can promote an account to admin.
+There is no UI control and no public endpoint that can promote an account to admin.
 
 ## Appointments and availability
 
@@ -202,7 +197,7 @@ Google callbacks, sign-out).
 ### 1. Requirements
 
 - Node.js 20.9+
-- MongoDB (local, Docker, Atlas or `mongodb-memory-server`)
+- MongoDB (local, Docker or Atlas)
 
 ### 2. Install
 
@@ -233,16 +228,22 @@ cp .env.example .env
 | `STRIPE_WEBHOOK_SECRET` | no | Required for checkout and webhook verification |
 | `STRIPE_CURRENCY` | no | Three-letter code, default `usd` |
 | `IMGBB_API_KEY` | no | Enables image uploads |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` | no | Used by `create-admin` and setup |
+| `ADMIN_EMAIL` | no | Restricts `POST /api/admin/setup` to one address |
 | `ADMIN_SETUP_SECRET` | no | 16+ chars; enables `POST /api/admin/setup` |
 
 Secrets belong in the host's environment settings. `.env` is gitignored.
 
 ### 4. Prepare the database and an admin
 
+The API creates its collections and indexes on boot. The service menu starts empty, so
+create the first admin through the setup endpoint and then add services from the admin
+dashboard (or `POST /api/services` with the admin token):
+
 ```bash
-npm run seed          # inserts 12 curated services
-npm run create-admin  # uses ADMIN_* from .env
+curl -X POST http://localhost:5050/api/admin/setup \
+  -H 'Content-Type: application/json' \
+  -H 'X-Admin-Setup-Secret: <value of ADMIN_SETUP_SECRET>' \
+  -d '{"name":"SalonBook Admin","email":"admin@salonbook.com","password":"AdminPass123"}'
 ```
 
 ### 5. Run
@@ -285,50 +286,30 @@ pasting an image URL.
 
 ## Testing
 
-The API was verified against a real MongoDB (in-memory server) with a black-box smoke
-suite.
+Automated checks in the repository:
 
 ```bash
-npm run typecheck
-npm run test:smoke
+npm run typecheck   # tsc --noEmit
+npm run build       # emit to dist/
 ```
 
-`test:smoke` expects:
+There is no test runner or smoke suite checked in. The API was exercised manually
+against a scratch MongoDB during development, covering:
 
-- the server running,
-- a **disposable** database seeded with `npm run seed`,
-- matching `API`, `ADMIN_SETUP_SECRET`, `ADMIN_EMAIL` and `ADMIN_PASSWORD` values.
-
-Example for a local macOS setup on port 5050:
-
-```bash
-API=http://localhost:5050 \
-ADMIN_SETUP_SECRET=local-admin-setup-secret \
-ADMIN_EMAIL=admin@salonbook.com \
-ADMIN_PASSWORD=AdminPass123 \
-npm run test:smoke
-```
-
-The suite covers 32 checks:
-
-- customer sign-up role and profile image;
-- unauthenticated and wrong-role access (`401` / `403`);
-- admin-only service creation, admin booking rejection;
-- server-side pricing and default `pending / unpaid` state;
+- customer sign-up, role assignment and profile updates;
+- `401` / `403` for unauthenticated and wrong-role access;
+- admin-only service creation and admin booking rejection;
+- server-side pricing and the default `pending / unpaid` state;
 - duplicate slot → `409`, availability reporting, released cancellations;
 - confirm/cancel ownership and state rules;
-- checkout blocked without Stripe (`503`) and for cancelled appointments (`409`);
-- profile updates that attempt to change `role` or `isBlocked`;
-- cross-customer appointment access (`404`);
-- inactive services rejected;
+- checkout refused without Stripe (`503`) and for cancelled appointments (`409`);
+- cross-customer appointment access (`404`) and inactive services;
 - block/unblock and blocked-session denial;
 - invalid webhook signature (`400`) and unknown routes (`404`).
 
-Result during development: **32 passed, 0 failed**, plus `tsc --noEmit` clean.
-
 **Not tested end-to-end:** real Stripe Checkout/webhooks and ImgBB uploads, because no
 credentials were available. Signature rejection, checkout guards and error ordering
-were tested. Google OAuth was also not exercised against Google.
+were checked. Google OAuth was also not exercised against Google.
 
 ## Deployment
 
@@ -339,7 +320,8 @@ Works on any Node host (Render, Railway, Fly.io, a VM) with MongoDB Atlas.
 3. Build with `npm run build`, start with `npm start`.
 4. Set `SERVER_URL` to the API origin and `CLIENT_URL` + `BETTER_AUTH_URL` to the
    frontend origin.
-5. Run `npm run seed` and create an admin (setup endpoint or `create-admin`).
+5. Call `POST /api/admin/setup` once with `ADMIN_SETUP_SECRET`, then add services from
+   the admin dashboard.
 6. Register the Stripe webhook and Google redirect URI for the production hosts.
 7. Confirm `/health` and `/api/auth/jwks` are reachable over HTTPS.
 
@@ -363,5 +345,6 @@ origin, while `SERVER_URL` remains the API origin. CORS must allow the frontend 
 - No email delivery: confirmations are visible in-app only.
 - No refunds or partial payments. Cancelling a paid appointment does not refund the
   Stripe charge.
-- The seed menu uses Unsplash URLs and fictional salon details.
+- The service menu starts empty on a fresh database; create services from the admin
+  dashboard.
 - Real Stripe/ImgBB/Google integrations remain unverified without credentials.

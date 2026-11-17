@@ -28,8 +28,6 @@ const envSchema = z.object({
   IMGBB_API_KEY: z.string().optional().default(""),
 
   ADMIN_EMAIL: z.string().email().optional(),
-  ADMIN_PASSWORD: z.string().min(8).optional(),
-  ADMIN_NAME: z.string().optional().default("SalonBook Admin"),
   ADMIN_SETUP_SECRET: z.string().min(16).optional(),
 });
 
