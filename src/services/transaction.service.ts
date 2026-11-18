@@ -1,4 +1,4 @@
-import type { QueryFilter } from "mongoose";
+import { Types, type QueryFilter } from "mongoose";
 import { Appointment } from "../models/appointment.model.js";
 import { Transaction, type TransactionDocument } from "../models/transaction.model.js";
 import type { TransactionQuery } from "../validators/index.js";
@@ -35,11 +35,19 @@ async function decorateTransactions(
   > & { _id: TransactionDocument["_id"] })[],
   includeCustomers: boolean,
 ) {
-  const appointmentIds = transactions.map((item) => item.appointmentId.toString());
+  const appointmentIds = transactions
+    .map((item) => (item.appointmentId ? String(item.appointmentId) : ""))
+    .filter((id) => Types.ObjectId.isValid(id));
+  const customerIds = transactions
+    .map((item) => (item.customerId ? String(item.customerId) : ""))
+    .filter(Boolean);
+
   const [appointments, customers] = await Promise.all([
-    Appointment.find({ _id: { $in: appointmentIds } }).lean(),
+    appointmentIds.length > 0
+      ? Appointment.find({ _id: { $in: appointmentIds } }).lean()
+      : Promise.resolve([]),
     includeCustomers
-      ? findPublicUsersByIds(transactions.map((item) => item.customerId))
+      ? findPublicUsersByIds(customerIds)
       : Promise.resolve(new Map()),
   ]);
 
@@ -48,7 +56,9 @@ async function decorateTransactions(
   );
 
   return transactions.map((transaction) => {
-    const appointment = appointmentMap.get(transaction.appointmentId.toString());
+    const appointment = transaction.appointmentId
+      ? appointmentMap.get(String(transaction.appointmentId))
+      : undefined;
     return toTransactionDto(transaction, {
       ...(includeCustomers
         ? { customer: customers.get(transaction.customerId) }
@@ -102,6 +112,10 @@ export async function getPaymentStatus(userId: string, sessionId: string) {
   }).lean();
 
   if (!transaction) throw notFound("Payment session not found");
+
+  if (!transaction.appointmentId || !Types.ObjectId.isValid(String(transaction.appointmentId))) {
+    throw notFound("Appointment not found");
+  }
 
   const appointment = await Appointment.findById(transaction.appointmentId).lean();
   if (!appointment) throw notFound("Appointment not found");

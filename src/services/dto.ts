@@ -141,7 +141,7 @@ export function toTransactionDto(
 ): TransactionDto {
   return {
     id: transaction._id.toString(),
-    appointmentId: transaction.appointmentId.toString(),
+    appointmentId: transaction.appointmentId ? transaction.appointmentId.toString() : "",
     customerId: transaction.customerId,
     amount: transaction.amount,
     currency: transaction.currency,

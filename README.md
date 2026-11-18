@@ -4,7 +4,8 @@ The REST API behind SalonBook: services, appointments, customers, dashboards,
 Stripe payments and Better Auth identity. Built with Express 5, TypeScript and
 MongoDB.
 
-- **Live API:** _add deployment URL_
+- **Live website:** https://salonbook-three.vercel.app/
+- **Live API:** https://salonbook-server-nkgk.vercel.app/
 - **Backend repository:** https://github.com/Saif-nyt/salonbook-server
 - **Frontend repository:** https://github.com/Saif-nyt/salonbook
 
