@@ -175,6 +175,13 @@ async function completeCheckout(session: Stripe.Checkout.Session): Promise<boole
     return false;
   }
 
+  if (appointment.status === "cancelled") {
+    console.warn(
+      `[stripe] Appointment ${appointmentId} is cancelled; skipping paid status update for session ${session.id}`,
+    );
+    return false;
+  }
+
   const amount =
     session.amount_total !== null
       ? session.amount_total / 100
