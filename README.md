@@ -88,21 +88,44 @@ The API does **not** trust client claims:
 
 ### Creating the first admin
 
-The only supported path is the protected setup endpoint, used once after deployment or
-against a fresh local database:
+Use the backend seed script to create the first administrator account. It creates the
+user through the existing Better Auth-compatible flow and assigns the `admin` role
+securely from the backend. Public registration always creates customers only.
+
+Run it from the backend directory:
 
 ```bash
-curl -X POST https://api.example.com/api/admin/setup \
-  -H 'Content-Type: application/json' \
-  -H "X-Admin-Setup-Secret: $ADMIN_SETUP_SECRET" \
-  -d '{"name":"SalonBook Admin","email":"admin@example.com","password":"StrongPass1"}'
+npm run seed:admin
 ```
 
-It is disabled when `ADMIN_SETUP_SECRET` is not configured, rejects requests with a
-wrong secret, refuses a second admin once one exists, and — when `ADMIN_EMAIL` is set —
-only accepts that address.
+The script is idempotent: if an admin account already exists, it exits without creating
+a duplicate.
 
-There is no UI control and no public endpoint that can promote an account to admin.
+**Credentials**
+
+- You can provide credentials via environment variables (recommended for non-interactive
+  environments): `SEED_ADMIN_EMAIL`/`ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`/`ADMIN_PASSWORD`,
+  and optionally `SEED_ADMIN_NAME`/`ADMIN_NAME`.
+- If email or password is not provided, the script prompts in an interactive terminal.
+  The password prompt is hidden and asks for confirmation.
+- Credentials are never hardcoded. Passwords are hashed and stored by the existing
+  Better Auth authentication system.
+
+Example (non-interactive):
+
+```bash
+SEED_ADMIN_EMAIL="admin@example.com" \
+SEED_ADMIN_PASSWORD="StrongPass1" \
+SEED_ADMIN_NAME="SalonBook Admin" \
+npm run seed:admin
+```
+
+If `ADMIN_EMAIL` is configured, the admin bootstrap process only accepts that address.
+
+A protected `POST /api/admin/setup` endpoint also exists for compatibility. It requires
+`ADMIN_SETUP_SECRET`, refuses a second admin once one exists, and follows the same
+backend bootstrap rules. There is no UI control and no public endpoint that can promote
+an account to admin.
 
 ## Appointments and availability
 
@@ -225,15 +248,17 @@ Secrets belong in the host's environment settings. `.env` is gitignored.
 ### 4. Prepare the database and an admin
 
 The API creates its collections and indexes on boot. The service menu starts empty, so
-create the first admin through the setup endpoint and then add services from the admin
-dashboard (or `POST /api/services` with the admin token):
+create the first admin with the seed script, then add services from the admin dashboard
+(or `POST /api/services` with the admin token):
 
 ```bash
-curl -X POST http://localhost:5050/api/admin/setup \
-  -H 'Content-Type: application/json' \
-  -H 'X-Admin-Setup-Secret: <value of ADMIN_SETUP_SECRET>' \
-  -d '{"name":"SalonBook Admin","email":"admin@salonbook.com","password":"AdminPass123"}'
+npm run seed:admin
 ```
+
+Provide credentials via environment variables (`SEED_ADMIN_EMAIL`/`ADMIN_EMAIL`,
+`SEED_ADMIN_PASSWORD`/`ADMIN_PASSWORD`, optional `SEED_ADMIN_NAME`/`ADMIN_NAME`) or run
+interactively to be prompted. The script will not create a duplicate if an admin already
+exists. See [Creating the first admin](#creating-the-first-admin) for details.
 
 ### 5. Run
 
@@ -309,8 +334,9 @@ Works on any Node host (Render, Railway, Fly.io, a VM) with MongoDB Atlas.
 3. Build with `npm run build`, start with `npm start`.
 4. Set `SERVER_URL` to the API origin and `CLIENT_URL` + `BETTER_AUTH_URL` to the
    frontend origin.
-5. Call `POST /api/admin/setup` once with `ADMIN_SETUP_SECRET`, then add services from
-   the admin dashboard.
+5. Create the first admin with `npm run seed:admin` (idempotent), then add services from
+   the admin dashboard. If you use the compatibility `POST /api/admin/setup` endpoint, it
+   requires `ADMIN_SETUP_SECRET`.
 6. Register the Stripe webhook and Google redirect URI for the production hosts.
 7. Confirm `/health` and `/api/auth/jwks` are reachable over HTTPS.
 
