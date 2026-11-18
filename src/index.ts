@@ -276,7 +276,7 @@ function createApp() {
   );
 
   // Uploads
-  app.post("/api/uploads", authenticate, singleImageUpload, postUpload);
+  app.post("/api/uploads", optionalAuthenticate, singleImageUpload, postUpload);
 
   // Admin bootstrap
   app.post("/api/admin/setup", validateBody(adminSetupSchema), postAdminSetup);
