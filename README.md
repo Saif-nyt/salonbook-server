@@ -11,6 +11,25 @@ MongoDB.
 
 ---
 
+## Important features
+
+- **Better Auth identity** with email/password, Google sign-in and JWT access tokens
+  verified through the auth server's JWKS.
+- **Role-based authorization** on every protected route (`authenticate`,
+  `requireAdmin`, `requireCustomer`), including blocked-account enforcement.
+- **Service catalogue** with search, category filtering, price/name sorting,
+  pagination and active/inactive status.
+- **Appointment booking** with availability checks, duplicate-slot prevention and
+  customer/admin cancellation rules.
+- **Stripe Checkout** for confirmed appointments, with payment status updated only
+  by a verified webhook event and idempotent event storage.
+- **Admin operations** for services, appointments, customers, dashboards and the
+  read-only transaction ledger.
+- **ImgBB image uploads** for service and profile images via authenticated,
+  size-limited multipart requests.
+
+---
+
 ## Stack
 
 
