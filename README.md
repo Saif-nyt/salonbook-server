@@ -121,7 +121,7 @@ pending ──(admin confirm)──► confirmed ──(Stripe webhook)──►
 - Mounted before `express.json()` so the raw body is available
 - Verifies `stripe-signature` with `STRIPE_WEBHOOK_SECRET`
 - Records the event in `webhook_events` and ignores duplicates
-- On `checkout.session.completed` / `checkout.session.async_payment_succeeded`, marks the transaction paid and the appointment `paid`
+- On `checkout.session.completed` and `checkout.session.async_payment_succeeded`, marks the transaction paid and the appointment `paid`
 - On failure/expiry events, marks the transaction failed and keeps the appointment unpaid
 
 No endpoint lets a client mark a payment paid. The success page only reads status.
@@ -167,90 +167,7 @@ All routes are prefixed with `/api`. Better Auth additionally exposes `/api/auth
 
 ---
 
-## Getting started
-
-### 1. Requirements
-
-- Node.js 20.9+
-- MongoDB (local, Docker, or Atlas)
-
-### 2. Install
-
-```bash
-npm install
-```
-
-### 3. Configure
-
-```bash
-cp .env.example .env
-```
-
-| Variable | Required | Notes |
-| --- | --- | --- |
-| `NODE_ENV` | no | `development`, `test`, or `production` |
-| `PORT` | no | Default `5000`. On macOS use `5050` if Control Center owns 5000 |
-| `MONGODB_URI` | yes | Full connection string including database name |
-| `SERVER_URL` | yes | This API's public origin |
-| `CLIENT_URL` | yes | Frontend public origin, used for CORS and redirects |
-| `BETTER_AUTH_URL` | yes | Public auth base (frontend origin, because auth is proxied) |
-| `BETTER_AUTH_BASE_URL` | no | Optional alias |
-| `AUTH_JWKS_URL` | no | Defaults to `${SERVER_URL}/api/auth/jwks` |
-| `ALLOWED_ORIGINS` | no | Extra comma-separated origins for CORS |
-| `BETTER_AUTH_SECRET` | yes | 32+ random characters |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | no | Enables Google OAuth |
-| `STRIPE_SECRET_KEY` | no | Enables checkout |
-| `STRIPE_WEBHOOK_SECRET` | no | Required for checkout and webhook verification |
-| `STRIPE_CURRENCY` | no | Three-letter code, default `usd` |
-| `IMGBB_API_KEY` | no | Enables image uploads |
-| `ADMIN_EMAIL` | no | Restricts `POST /api/admin/setup` to one address |
-| `ADMIN_SETUP_SECRET` | no | 16+ chars; enables `POST /api/admin/setup` |
-
-Secrets belong in the host's environment settings. `.env` is gitignored.
-
-### 4. Prepare the database and an admin
-
-The API creates its collections and indexes on boot. The service menu starts empty, so create the first admin, then add services from the admin dashboard:
-
-```bash
-npm run seed:admin
-```
-
-Provide credentials via environment variables or run interactively. The script will not create a duplicate if an admin already exists.
-
-### 5. Run
-
-```bash
-npm run dev     # tsx watch
-# or
-npm run build && npm start
-```
-
-`GET http://localhost:5000/health` returns `"database":"connected"`; the `payments` field reports whether Stripe is configured.
-
-### Google OAuth
-
-1. Create an OAuth client in Google Cloud Console.
-2. Authorized redirect URI: `https://<api-host>/api/auth/callback/google`.
-3. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, then restart.
-4. Set `NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=true` on the frontend.
-
-### Stripe
-
-1. Use a **test mode** secret key and create a webhook endpoint at `https://<api-host>/api/payments/webhook`.
-2. Subscribe to `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, and `payment_intent.payment_failed`.
-3. Put the signing secret in `STRIPE_WEBHOOK_SECRET`.
-4. For local testing: `stripe listen --forward-to localhost:5000/api/payments/webhook`.
-
-### ImgBB
-
-Set `IMGBB_API_KEY` to allow `POST /api/uploads` (field name `image`, up to 5 MB). Without it, the endpoint returns a configuration error.
-
----
-
 ## Deployment
-
-Works on any Node host (Render, Railway, Fly.io, a VM) with MongoDB Atlas.
 
 1. Create the database and set `MONGODB_URI`.
 2. Set all production env vars; `BETTER_AUTH_SECRET` must be strong and unique.
