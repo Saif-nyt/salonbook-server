@@ -1,8 +1,6 @@
 # SalonBook — Backend API
 
-The REST API behind SalonBook: services, appointments, customers, dashboards,
-Stripe payments and Better Auth identity. Built with Express 5, TypeScript and
-MongoDB.
+REST API behind SalonBook: services, appointments, customers, dashboards, Stripe payments, and Better Auth identity. Built with Express 5, TypeScript, and MongoDB.
 
 - **Live website:** https://salonbook-three.vercel.app/
 - **Live API:** https://salonbook-server-nkgk.vercel.app/
@@ -11,141 +9,90 @@ MongoDB.
 
 ---
 
-## Important features
+## Features
 
-- **Better Auth identity** with email/password, Google sign-in and JWT access tokens
-  verified through the auth server's JWKS.
-- **Role-based authorization** on every protected route (`authenticate`,
-  `requireAdmin`, `requireCustomer`), including blocked-account enforcement.
-- **Service catalogue** with search, category filtering, price/name sorting,
-  pagination and active/inactive status.
-- **Appointment booking** with availability checks, duplicate-slot prevention and
-  customer/admin cancellation rules.
-- **Stripe Checkout** for confirmed appointments, with payment status updated only
-  by a verified webhook event and idempotent event storage.
-- **Admin operations** for services, appointments, customers, dashboards and the
-  read-only transaction ledger.
-- **ImgBB image uploads** for service and profile images via authenticated,
-  size-limited multipart requests.
+- **Better Auth identity** — email/password, Google sign-in, JWT access tokens verified via JWKS
+- **Role-based authorization** — `authenticate`, `requireAdmin`, `requireCustomer`, blocked-account enforcement
+- **Service catalogue** — search, category filter, price/name sorting, pagination, active/inactive status
+- **Appointment booking** — availability checks, duplicate-slot prevention, customer/admin cancellation rules
+- **Stripe Checkout** — verified webhook updates payment status only; idempotent event storage
+- **Admin operations** — services, appointments, customers, dashboards, read-only transaction ledger
+- **ImgBB image uploads** — authenticated, size-limited multipart uploads
 
 ---
 
 ## Stack
 
-
-
 ```
 src/
-  index.ts              Express app, every API route, DB connection, HTTP server, shutdown
-  config/               env schema, constants, database connection
-  models/               User, Service, Appointment, Transaction, WebhookEvent
-  controllers/          HTTP parsing and response envelopes
-  services/             business rules and persistence
-  middleware/           auth, role gates, Zod validation, upload, errors
-  lib/                  Better Auth config, JWT/JWKS, Stripe and ImgBB clients
-  validators/           shared Zod schemas
-  utils/                API envelope, AppError, dates, Mongo helpers
+  index.ts            Express app, routes, DB connection, HTTP server, shutdown
+  config/             env schema, constants, database connection
+  models/             User, Service, Appointment, Transaction, WebhookEvent
+  controllers/        HTTP parsing and response envelopes
+  services/           business rules and persistence
+  middleware/         auth, role gates, Zod validation, upload, errors
+  lib/                Better Auth config, JWT/JWKS, Stripe and ImgBB clients
+  validators/         shared Zod schemas
+  utils/              API envelope, AppError, dates, Mongo helpers
 ```
 
-All route definitions live in `src/index.ts` next to the middleware order they depend
-on. Controllers stay thin and services own the business rules. Because Express matches
-in order, `/services/categories`, `/appointments/availability` and `/appointments/mine`
-are declared before their `/:id` counterparts, and the Stripe webhook is registered
-before `express.json()` so it receives the raw body.
+All route definitions live in `src/index.ts` next to their middleware order. Controllers stay thin and services own business rules. Because Express matches routes in order, `/services/categories`, `/appointments/availability`, and `/appointments/mine` are declared before their `/:id` counterparts, and the Stripe webhook is registered before `express.json()` so it receives the raw body.
 
 Every response uses:
 
 ```json
 { "success": true, "data": { }, "message": "optional", "meta": { } }
-{ "success": false, "error": { "code": "SLOT_UNAVAILABLE", "message": "…", "details": [] } }
+{ "success": false, "error": { "code": "...", "message": "…", "details": [] } }
 ```
+
+---
 
 ## Data model
 
 | Collection | Purpose |
 | --- | --- |
-| `user` | Better Auth-managed identity plus `role`, `isBlocked`, `phone` |
+| `user` | Better Auth identity plus `role`, `isBlocked`, `phone` |
 | `service` | Treatment menu: name, category, description, price, duration, image, status |
-| `appointment` | Customer request with service snapshot, date, slot, status, payment status, `active` flag |
-| `transaction` | One Stripe checkout per appointment, unique `appointmentId`, status and session reference |
+| `appointment` | Customer request with service snapshot, date, slot, status, payment status |
+| `transaction` | One Stripe checkout per appointment, unique `appointmentId`, status |
 | `webhook_events` | Processed Stripe event IDs for idempotency |
 
-Design choices worth knowing:
+**Design choices**
+- **Service snapshots.** Appointments copy `serviceName`, `serviceImage`, `serviceCategory`, and `serviceDuration`. Deleting a service never destroys visit history.
+- **One active booking per slot.** A partial unique index on `{ appointmentDate, timeSlot }` where `active: true` enforces this in MongoDB. Cancelling sets `active: false`, releasing the slot.
+- **Server-side pricing.** Booking accepts only a service ID, date, slot, and message. Price and duration are read from the service document and stored.
+- **One transaction per appointment.** A unique index prevents duplicate checkouts from creating parallel payment records.
 
-- **Service snapshots.** Appointments copy `serviceName`, `serviceImage`,
-  `serviceCategory` and `serviceDuration`. Deleting a service never destroys visit
-  history or receipts.
-- **One active booking per slot.** A partial unique index on
-  `{ appointmentDate, timeSlot }` where `active: true` enforces this in MongoDB, not
-  just in application code. Cancelling sets `active: false`, releasing the slot.
-- **Prices are server-side.** Booking accepts only a service ID, date, slot and
-  message. The price and duration are read from the service document and stored.
-- **One transaction per appointment.** A unique index prevents duplicate checkouts
-  from creating parallel payment records.
+---
 
 ## Authentication and roles
 
-Better Auth is mounted at `/api/auth/*` on this server. The JWT plugin issues
-asymmetric tokens; the JWKS endpoint is `/api/auth/jwks`.
+Better Auth is mounted at `/api/auth/*`. The JWT plugin issues asymmetric tokens; JWKS is at `/api/auth/jwks`.
 
 The API does **not** trust client claims:
 
-1. `authenticate` extracts the bearer token, verifies the signature against the
-   JWKS (default `${SERVER_URL}/api/auth/jwks`), then reloads the user from MongoDB.
-2. If the user is missing or `isBlocked`, the request fails with `403`.
-3. `requireAdmin` / `requireCustomer` enforce the role from the database.
+1. `authenticate` extracts the bearer token, verifies the signature against JWKS (`${SERVER_URL}/api/auth/jwks`), then reloads the user from MongoDB.
+2. Missing or blocked users fail with `403`.
+3. `requireAdmin` / `requireCustomer` enforce the database role.
 4. Better Auth hooks reject blocked users at sign-in and revoke their sessions.
 
-### Registration rules
-
+**Registration rules**
 - Public sign-up always creates `role: "customer"`.
-- A Better Auth database hook forces the role on insert, so a crafted request cannot
-  create an admin.
-- Password complexity (6+ characters, upper and lower case) is enforced by the auth
-  config, not only in the UI.
-- Profile updates accept `name`, `phone` and `image` only. `role` and `isBlocked` are
-  ignored by the profile endpoint.
+- A database hook forces the role on insert, so crafted requests cannot create an admin.
+- Password complexity (6+ characters, upper and lower case) is enforced in the auth config.
+- Profile updates accept `name`, `phone`, and `image` only; `role` and `isBlocked` are ignored.
 
-### Creating the first admin
-
-Use the backend seed script to create the first administrator account. It creates the
-user through the existing Better Auth-compatible flow and assigns the `admin` role
-securely from the backend. Public registration always creates customers only.
-
-Run it from the backend directory:
+**Creating the first admin**
 
 ```bash
 npm run seed:admin
 ```
 
-The script is idempotent: if an admin account already exists, it exits without creating
-a duplicate.
+The script is idempotent. Provide credentials via `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD` (or `ADMIN_EMAIL`/`ADMIN_PASSWORD`) for non-interactive runs; otherwise it prompts interactively. Credentials are never hardcoded; passwords are hashed by Better Auth.
 
-**Credentials**
+A protected `POST /api/admin/setup` endpoint also exists for compatibility, requiring `ADMIN_SETUP_SECRET` and refusing a second admin. There is no public endpoint that can promote an account to admin.
 
-- You can provide credentials via environment variables (recommended for non-interactive
-  environments): `SEED_ADMIN_EMAIL`/`ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`/`ADMIN_PASSWORD`,
-  and optionally `SEED_ADMIN_NAME`/`ADMIN_NAME`.
-- If email or password is not provided, the script prompts in an interactive terminal.
-  The password prompt is hidden and asks for confirmation.
-- Credentials are never hardcoded. Passwords are hashed and stored by the existing
-  Better Auth authentication system.
-
-Example (non-interactive):
-
-```bash
-SEED_ADMIN_EMAIL="admin@example.com" \
-SEED_ADMIN_PASSWORD="StrongPass1" \
-SEED_ADMIN_NAME="SalonBook Admin" \
-npm run seed:admin
-```
-
-If `ADMIN_EMAIL` is configured, the admin bootstrap process only accepts that address.
-
-A protected `POST /api/admin/setup` endpoint also exists for compatibility. It requires
-`ADMIN_SETUP_SECRET`, refuses a second admin once one exists, and follows the same
-backend bootstrap rules. There is no UI control and no public endpoint that can promote
-an account to admin.
+---
 
 ## Appointments and availability
 
@@ -158,47 +105,44 @@ pending ──(admin confirm)──► confirmed ──(Stripe webhook)──►
 ```
 
 - Customers create `pending / unpaid` requests only for active services.
-- Customers may cancel only their own **pending** appointments. Admins may cancel any
-  non-cancelled appointment.
+- Customers may cancel only their own pending appointments; admins may cancel any non-cancelled appointment.
 - Only an admin can confirm, and only from `pending`.
 - Only a confirmed, unpaid appointment owned by the customer can start checkout.
 - Cancelled appointments are rejected before any Stripe call.
-- Availability returns the ten salon slots for a date with an `available` boolean,
-  excluding active bookings.
+- Availability returns the salon slots for a date with an `available` boolean, excluding active bookings.
+
+---
 
 ## Payments
 
-`POST /api/payments/checkout/:id` creates a Stripe Checkout Session and a local
-`pending` transaction. It returns the session URL; the frontend redirects.
+`POST /api/payments/checkout/:id` creates a Stripe Checkout Session and a local `pending` transaction, returning the session URL.
 
 `POST /api/payments/webhook`:
+- Mounted before `express.json()` so the raw body is available
+- Verifies `stripe-signature` with `STRIPE_WEBHOOK_SECRET`
+- Records the event in `webhook_events` and ignores duplicates
+- On `checkout.session.completed` / `checkout.session.async_payment_succeeded`, marks the transaction paid and the appointment `paid`
+- On failure/expiry events, marks the transaction failed and keeps the appointment unpaid
 
-- is mounted **before** `express.json()` so the raw body is available;
-- verifies the `stripe-signature` header with `STRIPE_WEBHOOK_SECRET`;
-- records the event in `webhook_events` and ignores duplicates;
-- on `checkout.session.completed` and `checkout.session.async_payment_succeeded`,
-  marks the transaction paid and the appointment `paid`;
-- on failure/expiry events, marks the transaction failed and keeps the appointment
-  unpaid.
+No endpoint lets a client mark a payment paid. The success page only reads status.
 
-There is no endpoint that lets a client mark a payment paid. The success page only
-reads status.
+---
 
 ## API overview
 
-All routes are prefixed with `/api`.
+All routes are prefixed with `/api`. Better Auth additionally exposes `/api/auth/*` (sign-up, sign-in, token, JWKS, Google callbacks, sign-out).
 
 | Method | Route | Access |
 | --- | --- | --- |
-| GET | `/health` | public (not under `/api`) |
-| GET | `/services` | public; `search`, `category`, `status`, `sort`, `page`, `limit`, `includeInactive` |
+| GET | `/health` | public |
+| GET | `/services` | public |
 | GET | `/services/categories` | public |
 | GET | `/services/:id` | public |
 | POST | `/services` | admin |
 | PATCH | `/services/:id` | admin |
 | PATCH | `/services/:id/status` | admin |
 | DELETE | `/services/:id` | admin |
-| GET | `/appointments/availability?date=YYYY-MM-DD` | public |
+| GET | `/appointments/availability?date=` | public |
 | GET | `/appointments/mine` | customer |
 | POST | `/appointments` | customer |
 | GET | `/appointments` | admin |
@@ -216,20 +160,19 @@ All routes are prefixed with `/api`.
 | GET | `/transactions/mine` | customer |
 | GET | `/transactions` | admin |
 | POST | `/payments/checkout/:id` | customer |
-| GET | `/payments/status?session_id=…` | customer |
+| GET | `/payments/status?session_id=` | customer |
 | POST | `/payments/webhook` | Stripe signature |
-| POST | `/uploads` | authenticated (multipart `image`) |
+| POST | `/uploads` | authenticated |
 | POST | `/admin/setup` | `X-Admin-Setup-Secret` |
 
-Better Auth additionally exposes `/api/auth/*` (sign-up, sign-in, token, JWKS,
-Google callbacks, sign-out).
+---
 
 ## Getting started
 
 ### 1. Requirements
 
 - Node.js 20.9+
-- MongoDB (local, Docker or Atlas)
+- MongoDB (local, Docker, or Atlas)
 
 ### 2. Install
 
@@ -245,18 +188,18 @@ cp .env.example .env
 
 | Variable | Required | Notes |
 | --- | --- | --- |
-| `NODE_ENV` | no | `development`, `test` or `production` |
+| `NODE_ENV` | no | `development`, `test`, or `production` |
 | `PORT` | no | Default `5000`. On macOS use `5050` if Control Center owns 5000 |
 | `MONGODB_URI` | yes | Full connection string including database name |
 | `SERVER_URL` | yes | This API's public origin |
 | `CLIENT_URL` | yes | Frontend public origin, used for CORS and redirects |
-| `BETTER_AUTH_URL` | yes | Public auth base. Because auth is proxied, use the **frontend** origin |
-| `BETTER_AUTH_BASE_URL` | no | Optional alias for the same value |
+| `BETTER_AUTH_URL` | yes | Public auth base (frontend origin, because auth is proxied) |
+| `BETTER_AUTH_BASE_URL` | no | Optional alias |
 | `AUTH_JWKS_URL` | no | Defaults to `${SERVER_URL}/api/auth/jwks` |
 | `ALLOWED_ORIGINS` | no | Extra comma-separated origins for CORS |
 | `BETTER_AUTH_SECRET` | yes | 32+ random characters |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | no | Enables Google OAuth when both are set |
-| `STRIPE_SECRET_KEY` | no | Enables checkout with a webhook secret present |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | no | Enables Google OAuth |
+| `STRIPE_SECRET_KEY` | no | Enables checkout |
 | `STRIPE_WEBHOOK_SECRET` | no | Required for checkout and webhook verification |
 | `STRIPE_CURRENCY` | no | Three-letter code, default `usd` |
 | `IMGBB_API_KEY` | no | Enables image uploads |
@@ -267,18 +210,13 @@ Secrets belong in the host's environment settings. `.env` is gitignored.
 
 ### 4. Prepare the database and an admin
 
-The API creates its collections and indexes on boot. The service menu starts empty, so
-create the first admin with the seed script, then add services from the admin dashboard
-(or `POST /api/services` with the admin token):
+The API creates its collections and indexes on boot. The service menu starts empty, so create the first admin, then add services from the admin dashboard:
 
 ```bash
 npm run seed:admin
 ```
 
-Provide credentials via environment variables (`SEED_ADMIN_EMAIL`/`ADMIN_EMAIL`,
-`SEED_ADMIN_PASSWORD`/`ADMIN_PASSWORD`, optional `SEED_ADMIN_NAME`/`ADMIN_NAME`) or run
-interactively to be prompted. The script will not create a duplicate if an admin already
-exists. See [Creating the first admin](#creating-the-first-admin) for details.
+Provide credentials via environment variables or run interactively. The script will not create a duplicate if an admin already exists.
 
 ### 5. Run
 
@@ -288,62 +226,27 @@ npm run dev     # tsx watch
 npm run build && npm start
 ```
 
-`GET http://localhost:5000/health` should return `"database":"connected"`. The
-`payments` field reports whether Stripe is configured.
+`GET http://localhost:5000/health` returns `"database":"connected"`; the `payments` field reports whether Stripe is configured.
 
 ### Google OAuth
 
 1. Create an OAuth client in Google Cloud Console.
 2. Authorized redirect URI: `https://<api-host>/api/auth/callback/google`.
-3. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` and restart.
+3. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, then restart.
 4. Set `NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=true` on the frontend.
 
 ### Stripe
 
-1. Use a **test mode** secret key and create a webhook endpoint pointing at
-   `https://<api-host>/api/payments/webhook`.
-2. Subscribe to `checkout.session.completed`,
-   `checkout.session.async_payment_succeeded`,
-   `checkout.session.async_payment_failed`, `checkout.session.expired` and
-   `payment_intent.payment_failed`.
+1. Use a **test mode** secret key and create a webhook endpoint at `https://<api-host>/api/payments/webhook`.
+2. Subscribe to `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, and `payment_intent.payment_failed`.
 3. Put the signing secret in `STRIPE_WEBHOOK_SECRET`.
-4. For local testing forward events:
-   `stripe listen --forward-to localhost:5000/api/payments/webhook`.
+4. For local testing: `stripe listen --forward-to localhost:5000/api/payments/webhook`.
 
 ### ImgBB
 
-Set `IMGBB_API_KEY` to allow `POST /api/uploads` (field name `image`, images up to
-5 MB). Without it, the endpoint returns a configuration error and the UI falls back to
-pasting an image URL.
+Set `IMGBB_API_KEY` to allow `POST /api/uploads` (field name `image`, up to 5 MB). Without it, the endpoint returns a configuration error.
 
 ---
-
-## Testing
-
-Automated checks in the repository:
-
-```bash
-npm run typecheck   # tsc --noEmit
-npm run build       # emit to dist/
-```
-
-There is no test runner or smoke suite checked in. The API was exercised manually
-against a scratch MongoDB during development, covering:
-
-- customer sign-up, role assignment and profile updates;
-- `401` / `403` for unauthenticated and wrong-role access;
-- admin-only service creation and admin booking rejection;
-- server-side pricing and the default `pending / unpaid` state;
-- duplicate slot → `409`, availability reporting, released cancellations;
-- confirm/cancel ownership and state rules;
-- checkout refused without Stripe (`503`) and for cancelled appointments (`409`);
-- cross-customer appointment access (`404`) and inactive services;
-- block/unblock and blocked-session denial;
-- invalid webhook signature (`400`) and unknown routes (`404`).
-
-**Not tested end-to-end:** real Stripe Checkout/webhooks and ImgBB uploads, because no
-credentials were available. Signature rejection, checkout guards and error ordering
-were checked. Google OAuth was also not exercised against Google.
 
 ## Deployment
 
@@ -352,34 +255,31 @@ Works on any Node host (Render, Railway, Fly.io, a VM) with MongoDB Atlas.
 1. Create the database and set `MONGODB_URI`.
 2. Set all production env vars; `BETTER_AUTH_SECRET` must be strong and unique.
 3. Build with `npm run build`, start with `npm start`.
-4. Set `SERVER_URL` to the API origin and `CLIENT_URL` + `BETTER_AUTH_URL` to the
-   frontend origin.
-5. Create the first admin with `npm run seed:admin` (idempotent), then add services from
-   the admin dashboard. If you use the compatibility `POST /api/admin/setup` endpoint, it
-   requires `ADMIN_SETUP_SECRET`.
-6. Register the Stripe webhook and Google redirect URI for the production hosts.
+4. Set `SERVER_URL` to the API origin and `CLIENT_URL` + `BETTER_AUTH_URL` to the frontend origin.
+5. Create the first admin with `npm run seed:admin`, then add services from the admin dashboard. `POST /api/admin/setup` requires `ADMIN_SETUP_SECRET`.
+6. Register the Stripe webhook and Google redirect URI for production hosts.
 7. Confirm `/health` and `/api/auth/jwks` are reachable over HTTPS.
 
-Because the frontend proxies `/api/auth/*`, `BETTER_AUTH_URL` must be the **frontend**
-origin, while `SERVER_URL` remains the API origin. CORS must allow the frontend origin.
+Because the frontend proxies `/api/auth/*`, `BETTER_AUTH_URL` must be the **frontend** origin while `SERVER_URL` remains the API origin. CORS must allow the frontend origin.
+
+---
 
 ## Security notes
 
-- No secrets are returned by any endpoint; transaction responses contain session
-  references, not card data.
-- Helmet is enabled, `x-powered-by` is disabled and CORS is allow-listed.
+- No secrets are returned by any endpoint; transaction responses contain session references, not card data.
+- Helmet is enabled, `x-powered-by` is disabled, and CORS is allow-listed.
 - Webhook bodies are read raw and verified before parsing into domain actions.
 - Every admin route is protected server-side, independent of the UI.
 - The setup endpoint requires a long secret and is inert without it.
-- Input is validated with Zod at the route boundary; Mongo identifiers are validated
-  before use.
+- Input is validated with Zod at the route boundary; Mongo identifiers are validated before use.
 
-## Known limitations
+---
 
-- Slot availability is global (one booking per date/time), not per stylist.
-- No email delivery: confirmations are visible in-app only.
-- No refunds or partial payments. Cancelling a paid appointment does not refund the
-  Stripe charge.
-- The service menu starts empty on a fresh database; create services from the admin
-  dashboard.
-- Real Stripe/ImgBB/Google integrations remain unverified without credentials.
+## Testing
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm run build       # emit to dist/
+```
+
+The API was exercised manually against a scratch MongoDB during development, covering sign-up/role/profile, `401`/`403` access rules, admin-only service creation, server-side pricing, slot conflicts, confirm/cancel ownership, checkout guards, cross-customer access, blocked sessions, invalid webhook signatures, and unknown routes. Real Stripe webhooks and ImgBB uploads were not exercised without credentials.
